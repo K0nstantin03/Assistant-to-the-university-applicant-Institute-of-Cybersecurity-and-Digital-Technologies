@@ -1,47 +1,10 @@
-"""
-ingest.py — сбор исходных данных и наполнение векторного индекса.
 
-ПРАКТИКА 2. Что делает студент:
-  1. clean_text()  — предварительная очистка: переносы, колонтитулы, мусорные пробелы
-  2. chunk_text()  — нарезка на чанки фиксированного размера с перекрытием
-  3. detect_category() — рубрикация чанка; словарь рубрик задаёте вы под свой домен
-
-  4. черновик gold_dataset.json — 5 вопросов с указанием файлов-источников
-
-Готово и трогать не нужно: обход data/raw/, чтение PDF и TXT, запись в ChromaDB,
-замер hit-rate в evaluate_retrieval().
-
-Каждый запуск пересобирает индекс с нуля — коллекция очищается перед наполнением.
-Поэтому при подборе параметров достаточно поправить CHUNK_SIZE или CHUNK_OVERLAP
-в config.py и запустить ingest.py снова: удалять data/chroma/ руками не нужно.
-
-Критерии приёмки:
-  - python ingest.py отрабатывает без ошибок, коллекция непуста
-  - у каждого чанка заполнены source, page и category; пустых category нет
-  - поиск с фильтром по category возвращает чанки только этой категории
-  - в gold_dataset.json не меньше 5 вопросов, у каждого заполнено expected_sources
-  - показаны не менее двух замеров с разными CHUNK_SIZE / CHUNK_OVERLAP,
-    и выбор итоговых значений объяснён числом, а не вкусом
-  - CHUNK_SIZE и CHUNK_OVERLAP берутся из config.py, а не зашиты в код
-
-Про метрику. hit-rate@k отвечает на один вопрос: попал ли фрагмент с ответом
-в первые k результатов. Считается механически, сверкой поля source с ожидаемым —
-ни модели, ни судьи для этого не нужно, поэтому мерить можно уже здесь, на П2.
-Не путайте её с Context Precision из триады RAG: та оценивает, насколько найденное
-относится к делу, её считает LLM-судья, и появляется она только на П6. В плане
-дисциплины обе назывались «точностью извлечения контекста», хотя это разные вещи.
-
-Запуск:
-    python ingest.py          # проиндексировать и сразу замерить
-    python ingest.py --eval   # только замер, без переиндексации
-"""
-
+import re
+import json
 import hashlib
 from pathlib import Path
 
 import config
-
-
 # --- Читатели форматов: готовы ---
 
 def read_txt(path: Path) -> list[tuple[int, str]]:
@@ -62,6 +25,7 @@ READERS = {".txt": read_txt, ".md": read_txt, ".pdf": read_pdf}
 
 # --- Ваша часть (П2) ---
 
+
 def clean_text(text: str) -> str:
     r"""Очистить сырой текст перед нарезкой.
 
@@ -71,7 +35,27 @@ def clean_text(text: str) -> str:
     Подсказка: начните с re.sub(r"-\n", "", text) и r"\s+" -> " ", посмотрите
     на результат глазами и добавьте правила под свои исходные данные.
     """
-    raise NotImplementedError("П2: реализуйте очистку текста")
+    if not text:
+        return ""
+
+    # Невидимые символы и «мягкие» пробелы
+    text = text.replace("\xa0", " ")      # NBSP из PDF и веб-страниц
+    text = text.replace("\u200b", "")     # zero-width space
+    text = text.replace("\ufeff", "")     # BOM
+
+    # Склейка слов, разорванных переносом: "инфор-\nмация" -> "информация"
+    text = re.sub(r"-\s*\n\s*", "", text)
+
+    # Рваные строки PDF -> один поток
+    text = re.sub(r"\n+", " ", text)
+
+    # Отдельно стоящие номера страниц (1–3 цифры)
+    text = re.sub(r"(?:^|\s)\d{1,3}(?=\s|$)", " ", text)
+
+    # Цепочки пробелов и табов -> один пробел
+    text = re.sub(r"[ \t]+", " ", text)
+
+    return text.strip()
 
 
 def chunk_text(text: str, size: int = config.CHUNK_SIZE,
@@ -84,20 +68,69 @@ def chunk_text(text: str, size: int = config.CHUNK_SIZE,
     Следите за двумя вещами: шаг сдвига равен size - overlap (не size), и
     overlap обязан быть меньше size, иначе цикл не сойдётся.
     """
-    raise NotImplementedError("П2: реализуйте нарезку с перекрытием")
+    if overlap >= size:
+        raise ValueError(
+            f"overlap ({overlap}) должен быть меньше size ({size})"
+        )
+
+    step = size - overlap
+    chunks: list[str] = []
+
+    for i in range(0, len(text), step):
+        chunk = text[i:i + size]
+        if chunk.strip():
+            chunks.append(chunk)
+        if i + size >= len(text):
+            break
+
+    return chunks
+
+
+RUBRICS: dict[str, list[str]] = {
+    "admission": [
+        "приём", "прием", "поступлен", "заявлен", "документ",
+        "срок", "подач", "направлен", "бюджет", "целев",
+        "абитуриент", "комисси",
+    ],
+    "dormitory": [
+        "общежит", "заселен", "проживан", "комнат", "мест ",
+        "койк", "студенческ", "бытов", "комендант",
+    ],
+    "cost": [
+        "стоимост", "стоит", "плат", "обучени", "оплат",
+        "скидк", "приказ", "цен", "рубл", "тариф",
+    ],
+    "exams": [
+        "экзамен", "испытан", "егэ", "балл", "вступительн",
+        "предмет", "профильн", "минимальн", "перечень",
+    ],
+}
+
+DEFAULT_RUBRIC = "general"
 
 
 def detect_category(text: str, source: str) -> str:
     """Определить рубрику чанка.
 
-    Словарь рубрик — ваш проектный выбор, он зависит от домена. Для налогового
-    консультанта это может быть "law" | "faq" | "forms"; для ассистента абитуриента —
-    "admission" | "dormitory" | "schedule".
-
     Достаточно правил по имени файла и ключевым словам — LLM здесь не нужна.
     Пустых категорий быть не должно: заведите рубрику по умолчанию.
     """
-    raise NotImplementedError("П2: реализуйте рубрикацию")
+    # 1) Рубрика по имени файла — если разные документы отвечают за разные темы
+    source_lower = source.lower()
+    if "file1" in source_lower:
+        return "rubric_a"
+    if "file2" in source_lower:
+        return "rubric_b"
+
+    # 2) Рубрика по ключевым словам внутри текста
+    text_lower = text.lower()
+    for rubric, keywords in RUBRICS.items():
+        for kw in keywords:
+            if kw in text_lower:
+                return rubric
+
+    # 3) Ничего не подошло — рубрика по умолчанию
+    return DEFAULT_RUBRIC
 
 
 # --- Сборка индекса: готова ---
@@ -200,3 +233,5 @@ if __name__ == "__main__":
         print(f"Всего в коллекции: {config.get_collection().count()}")
 
     evaluate_retrieval()
+
+

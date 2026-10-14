@@ -1,37 +1,26 @@
 [
   {
-    "id": 1,
-    "question": "ЗАМЕНИТЕ (П2): вопрос, ответ на который прямо есть в корпусе",
-    "expected_sources": ["имя_файла.pdf"],
-    "expected": "",
-    "type": "direct"
+    "question": "До какого числа нужно подать документы на бюджет?",
+    "expected_sources": ["rules.pdf"],
+    "type": "direct",
+    "expected": ""
   },
   {
-    "id": 2,
-    "question": "ЗАМЕНИТЕ (П2): вопрос, ответ на который лежит в другом файле",
-    "expected_sources": ["другой_файл.pdf"],
-    "expected": "",
-    "type": "direct"
+    "question": "Какие документы нужны для заселения в общежитие?",
+    "expected_sources": ["rules.pdf"],
+    "type": "direct",
+    "expected": ""
   },
   {
-    "id": 3,
-    "question": "ЗАМЕНИТЕ (П2): вопрос на стыке двух разделов базы знаний",
-    "expected_sources": ["имя_файла.pdf", "другой_файл.pdf"],
-    "expected": "",
-    "type": "cross_section"
+    "question": "Можно ли подать заявление на два направления сразу и какие для этого нужны документы?",
+    "expected_sources": ["rules.pdf"],
+    "type": "cross_section",
+    "expected": ""
   },
   {
-    "id": 4,
-    "question": "ЗАМЕНИТЕ (П2): вопрос с неоднозначной формулировкой",
-    "expected_sources": ["имя_файла.pdf"],
-    "expected": "",
-    "type": "ambiguous"
-  },
-  {
-    "id": 5,
-    "question": "ЗАМЕНИТЕ (П2): вопрос, ответа на который в корпусе НЕТ",
-    "expected_sources": [],
-    "expected": "В базе знаний нет ответа на этот вопрос",
-    "type": "out_of_scope"
+    "question": "Сколько стоит обучение и как оплатить?",
+    "expected_sources": ["rules.pdf"],
+    "type": "ambiguous",
+    "expected": ""
   }
 ]
