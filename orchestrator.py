@@ -348,40 +348,9 @@ class Orchestrator:
 
             return "admission"
 
-        # 5. Общие вопросы по теме поступления
-
-        question_words = (
-
-            "что",
-
-            "как",
-
-            "почему",
-
-            "когда",
-
-            "где",
-
-            "кто",
-
-            "можно ли",
-
-            "нужно ли",
-
-        )
-
-        if "?" in text_lower or any(
-
-            re.search(rf"\b{re.escape(word)}\b", text_lower)
-
-            for word in question_words
-
-        ):
-
-            return "admission"
-
-        # 6. Неизвестный интент
-
+        # 5. Неизвестный интент.
+        # Нельзя считать любой вопрос вопросом о приёме: тогда «Кто такой ден?»
+        # уходит в admission, и состояние по умолчанию недостижимо.
         return "unknown"
 
     # --- Готовая механика: не менять ---
