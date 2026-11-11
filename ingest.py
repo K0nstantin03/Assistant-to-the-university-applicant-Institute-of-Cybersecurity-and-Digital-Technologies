@@ -121,6 +121,26 @@ def detect_category(text: str, source: str) -> str:
     """
     text_lower = text.lower().replace("ё", "е")
 
+    admission_phrases = (
+        "прием документов",
+        "приема документов",
+        "приеме документов",
+        "подача документов",
+        "подачи документов",
+        "подать документы",
+        "подать документ",
+        "срок подачи",
+        "завершения приема документов",
+        "заявление о приеме",
+        "заявлении о приеме",
+        "согласие на зачисление",
+        "20 июня 2026",
+        "15 июля 2026",
+        "25 июля 2026",
+    )
+    if any(phrase in text_lower for phrase in admission_phrases):
+        return "admission"
+
     for rubric, keywords in RUBRICS.items():
         for keyword in keywords:
             if keyword in text_lower:

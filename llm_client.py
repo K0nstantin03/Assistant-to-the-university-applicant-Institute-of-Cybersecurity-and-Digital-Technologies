@@ -1,94 +1,96 @@
-"""
-llm_client.py — доступ к языковой модели за общим интерфейсом.
+"""Клиенты языковых моделей с общим интерфейсом LLMClient."""
 
-ПРАКТИКА 4. Что делает студент:
-  1. GigaChatClient.generate() — вызов Сбер GigaChat через официальный SDK
-  2. OllamaClient.generate()   — вызов локальной модели через HTTP API Ollama
-  3. count_tokens()            — оценка длины промпта до отправки
-
-Готово и трогать не нужно: build_client() и выбор бэкенда по LLM_BACKEND.
-
-Критерии приёмки:
-  - смена LLM_BACKEND с gigachat на ollama не требует правки orchestrator.py
-  - длина промпта считается до отправки и логируется
-  - оба клиента принимают один и тот же список messages и возвращают строку
-
-НЕ МЕНЯТЬ: сигнатуру generate(messages, temperature) — она объявлена в contracts.py
-и на неё опирается оркестратор.
-
-Зачем абстракция. Учебные квоты кончаются, сеть в аудитории падает, а занятие
-должно продолжаться. Ollama — фолбэк, который работает офлайн. Заодно это
-материал для сравнения авторегрессионной модели и reasoning-модели из Л4:
-у DeepSeek-R1 в ответе виден блок рассуждений, у GigaChat — нет.
-
-Третий бэкенд — fake_llm.FakeClient, офлайн-заглушка без сети и ключей. Она
-нужна для отладки, когда недоступны оба клиента, и ваши реализации не заменяет:
-работа, сданная на LLM_BACKEND=fake, не принимается.
-"""
+import re
 
 import config
 from contracts import LLMClient
 
+OLLAMA_TIMEOUT = 600
+
 
 class GigaChatClient:
-    """Клиент Сбер GigaChat API."""
+    """Клиент GigaChat API."""
 
     def __init__(self):
         self.model = config.GIGACHAT_MODEL
-        # TODO (П4): создать клиент
-        # from gigachat import GigaChat
-        # self._client = GigaChat(credentials=config.GIGACHAT_CREDENTIALS,
-        #                         model=self.model,
-        #                         verify_ssl_certs=config.GIGACHAT_VERIFY_SSL)
+        self._client = None
+        self._init_error = ""
+        try:
+            from gigachat import GigaChat
+
+            self._client = GigaChat(
+                credentials=config.GIGACHAT_CREDENTIALS,
+                model=self.model,
+                verify_ssl_certs=config.GIGACHAT_VERIFY_SSL,
+            )
+        except Exception as exc:
+            self._init_error = str(exc)
 
     def generate(self, messages: list[dict], temperature: float = 0.3) -> str:
-        """Отправить диалог в GigaChat и вернуть текст ответа.
-
-        SDK принимает структуру вида {"messages": [...], "temperature": ...}.
-        Ответ лежит в response.choices[0].message.content.
-        Не забудьте обработать сетевую ошибку: занятие не должно падать трассировкой.
-        """
-        raise NotImplementedError("П4: реализуйте вызов GigaChat")
+        if self._client is None:
+            return f"GigaChat недоступен: {self._init_error}"
+        try:
+            response = self._client.chat({
+                "messages": messages,
+                "temperature": temperature,
+            })
+            content = response.choices[0].message.content
+        except Exception as exc:
+            return f"GigaChat недоступен: {exc}"
+        if not content:
+            return "GigaChat вернул пустой ответ"
+        return content.strip()
 
     def count_tokens(self, text: str) -> int:
-        """Оценка длины в токенах.
-
-        У GigaChat есть метод tokens_count. Если он недоступен, дайте оценку:
-        для русского текста примерно один токен на 3 символа. Точность здесь
-        не главное — важно видеть порядок величины и связать его со стоимостью.
-        """
-        raise NotImplementedError("П4: реализуйте подсчёт токенов")
+        return len(text) // 3
 
 
 class OllamaClient:
-    """Клиент локального инференса через Ollama."""
+    """Клиент локальной модели через HTTP API Ollama."""
 
     def __init__(self):
         self.model = config.OLLAMA_MODEL
-        self.host = config.OLLAMA_HOST
+        self.host = config.OLLAMA_HOST.rstrip("/")
 
     def generate(self, messages: list[dict], temperature: float = 0.3) -> str:
-        """POST на {host}/api/chat с телом {"model", "messages", "stream": False}.
+        import requests
 
-        Ответ — в data["message"]["content"].
-        У reasoning-моделей ответ приходит с блоком <think>...</think> — решите,
-        показывать его пользователю или вырезать, и обоснуйте выбор на защите.
-        """
-        raise NotImplementedError("П4: реализуйте вызов Ollama")
+        try:
+            response = requests.post(
+                f"{self.host}/api/chat",
+                json={
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": {"temperature": temperature},
+                },
+                timeout=OLLAMA_TIMEOUT,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except requests.RequestException as exc:
+            return f"Ollama недоступна: {exc}"
+        except ValueError as exc:
+            return f"Ollama вернула некорректный ответ: {exc}"
+
+        message = data.get("message") or {}
+        content = message.get("content") or ""
+        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+        if not content:
+            return "Ollama вернула пустой ответ"
+        return content
 
     def count_tokens(self, text: str) -> int:
-        """Оценка длины в токенах — та же логика, что и в GigaChatClient."""
-        raise NotImplementedError("П4: реализуйте подсчёт токенов")
+        return len(text) // 3
 
 
 def build_client() -> LLMClient:
-    """Выбрать бэкенд по конфигурации. Готово, менять не нужно."""
+    """Выбрать бэкенд по LLM_BACKEND."""
     if config.LLM_BACKEND == "ollama":
         return OllamaClient()
     if config.LLM_BACKEND == "gigachat":
         return GigaChatClient()
     if config.LLM_BACKEND == "fake":
-        # Импорт внутри ветки: без него fake_llm тянулся бы при любом бэкенде
         from fake_llm import FakeClient
 
         return FakeClient()

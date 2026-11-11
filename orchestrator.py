@@ -266,11 +266,41 @@ class Orchestrator:
 
             return "housing"
 
+        admission_deadline_patterns = [
+
+            r"\bподать\s+документ\w*",
+
+            r"\bподач\w*\s+документ\w*",
+
+            r"\bприем\w*\s+документ\w*",
+
+            r"\bсрок\w*\s+подач\w*",
+
+            r"\bдо\s+какого\s+числа\b",
+
+            r"\bзавершени\w*\s+прием\w*\s+документ\w*",
+
+            r"\bзаявлени\w*\s+о\s+прием\w*",
+
+        ]
+
+        if any(
+
+            re.search(pattern, text_lower)
+
+            for pattern in admission_deadline_patterns
+
+        ):
+
+            return "admission"
+
         # 2. Вопросы о стоимости обучения
 
         cost_patterns = [
 
             r"\bстоимост\w*",
+
+            r"\bстоить\b",
 
             r"\bсколько стоит\b",
 
