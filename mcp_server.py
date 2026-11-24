@@ -77,4 +77,12 @@ def get_history(session_id: str, n: int = config.MEMORY_WINDOW) -> list[dict]:
 
 
 if __name__ == "__main__":
+    import sys
+
+    if sys.platform == "win32":
+        # На Windows загружаем нативные библиотеки поиска до запуска
+        # фонового чтения stdin в stdio-транспорте MCP.
+        import chromadb
+        import sentence_transformers
+
     mcp.run()
